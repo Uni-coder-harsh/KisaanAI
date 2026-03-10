@@ -1,0 +1,41 @@
+# ── API ───────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# ── ML ────────────────────────────────────────────────────────
+scikit-learn
+xgboost
+torch
+numpy
+pandas
+joblib
+
+# ── MLflow ────────────────────────────────────────────────────
+mlflow
+
+# ── LLM / RAG ─────────────────────────────────────────────────
+langchain
+langchain-openai
+langchain-pinecone
+openai
+pinecone
+tiktoken
+
+# ── Data Pipeline ─────────────────────────────────────────────
+httpx
+prefect
+sqlalchemy
+psycopg2-binary
+alembic
+
+# ── Feature Store ─────────────────────────────────────────────
+redis
+
+# ── Monitoring ────────────────────────────────────────────────
+prometheus-client
+
+# ── Utils ─────────────────────────────────────────────────────
+python-dotenv
+loguru
