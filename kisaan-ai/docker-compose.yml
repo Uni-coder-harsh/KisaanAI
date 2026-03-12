@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── PostgreSQL ────────────────────────────────────────────────
   postgres:
@@ -65,13 +63,17 @@ services:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - GROQ_API_KEY=${GROQ_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PINECONE_API_KEY=${PINECONE_API_KEY}
     env_file:
       - .env
     volumes:
+      # Mount all code folders — changes reflect instantly, no rebuild needed
       - ./inference_api:/app/inference_api
       - ./ml_models:/app/ml_models
+      - ./rag_engine:/app/rag_engine
+      - ./data_pipeline:/app/data_pipeline
     depends_on:
       - postgres
       - redis

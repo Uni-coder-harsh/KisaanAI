@@ -1,0 +1,43 @@
+{
+  "best_model": "random_forest",
+  "accuracy": 0.9931818181818182,
+  "all_scores": {
+    "random_forest": 0.9931818181818182,
+    "xgboost": 0.9931818181818182,
+    "neural_network": 0.9886363636363636
+  },
+  "feature_cols": [
+    "N",
+    "P",
+    "K",
+    "temperature",
+    "humidity",
+    "ph",
+    "rainfall"
+  ],
+  "num_classes": 22,
+  "classes": [
+    "apple",
+    "banana",
+    "blackgram",
+    "chickpea",
+    "coconut",
+    "coffee",
+    "cotton",
+    "grapes",
+    "jute",
+    "kidneybeans",
+    "lentil",
+    "maize",
+    "mango",
+    "mothbeans",
+    "mungbean",
+    "muskmelon",
+    "orange",
+    "papaya",
+    "pigeonpeas",
+    "pomegranate",
+    "rice",
+    "watermelon"
+  ]
+}

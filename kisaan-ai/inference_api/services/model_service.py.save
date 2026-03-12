@@ -1,6 +1,5 @@
 """
 Model Service — loads and manages all ML models at API startup.
-Loads directly from local artifacts (no MLflow registry network calls).
 """
 
 import os
@@ -8,11 +7,11 @@ import json
 import logging
 import joblib
 import numpy as np
+import mlflow
+import mlflow.sklearn
 from typing import Optional
 from dotenv import load_dotenv
-
 load_dotenv()
-
 from inference_api.schemas.models import (
     CropPredictRequest, CropPredictResponse,
     YieldPredictRequest, YieldPredictResponse,
@@ -21,21 +20,23 @@ from rag_engine.rag_service import RAGService
 
 logger = logging.getLogger(__name__)
 
+# Crop name mapping — schema uses common names, dataset uses FAO names
 CROP_NAME_MAP = {
-    "rice":         "Rice, paddy",
-    "wheat":        "Wheat",
-    "maize":        "Maize",
-    "corn":         "Maize",
-    "potato":       "Potatoes",
-    "potatoes":     "Potatoes",
-    "soybean":      "Soybeans",
-    "soybeans":     "Soybeans",
-    "sorghum":      "Sorghum",
-    "cassava":      "Cassava",
+    "rice":       "Rice, paddy",
+    "wheat":      "Wheat",
+    "maize":      "Maize",
+    "corn":       "Maize",
+    "potato":     "Potatoes",
+    "potatoes":   "Potatoes",
+    "soybean":    "Soybeans",
+    "soybeans":   "Soybeans",
+    "sorghum":    "Sorghum",
+    "cassava":    "Cassava",
     "sweet potato": "Sweet potatoes",
-    "yams":         "Yams",
+    "yams":       "Yams",
 }
 
+# Indian state → country mapping for the global dataset
 STATE_TO_COUNTRY = {
     "india": "India",
     "default": "India",
@@ -44,14 +45,14 @@ STATE_TO_COUNTRY = {
 
 class ModelService:
     def __init__(self):
-        self.crop_model   = None
-        self.crop_scaler  = None
-        self.crop_encoder = None
-        self.yield_model  = None
-        self.yield_scaler = None
-        self.area_encoder = None
-        self.item_encoder = None
-        self.yield_meta   = None
+        self.crop_model    = None
+        self.crop_scaler   = None
+        self.crop_encoder  = None
+        self.yield_model   = None
+        self.yield_scaler  = None
+        self.area_encoder  = None
+        self.item_encoder  = None
+        self.yield_meta    = None
         self.rag: Optional[RAGService] = None
         self._startup_time = None
         self._model_versions = {}
@@ -62,22 +63,27 @@ class ModelService:
         await self._load_crop_model()
         await self._load_yield_model()
         await self._load_rag()
-        logger.info("✅ All models loaded successfully")
+        logger.info("All models loaded successfully")
 
-    # ── Crop model ───────────────────────────────────────────────
     async def _load_crop_model(self):
-        artifact_dir = "ml_models/crop_recommendation/artifacts"
         try:
-            self.crop_model   = joblib.load(f"{artifact_dir}/best_model.pkl")
-            self.crop_scaler  = joblib.load(f"{artifact_dir}/scaler.pkl")
-            self.crop_encoder = joblib.load(f"{artifact_dir}/label_encoder.pkl")
-            self._model_versions["crop"] = "local:v1"
-            logger.info("Crop model loaded from local artifacts")
-        except Exception as e:
-            logger.warning(f"Could not load crop model: {e}. Using mock.")
-            self._model_versions["crop"] = "mock"
+            mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+            model_uri = "models:/crop_xgb/Production"
+            self.crop_model = mlflow.sklearn.load_model(model_uri)
+            self._model_versions["crop"] = "mlflow:crop_xgb/Production"
+            logger.info("Loaded crop model from MLflow registry")
+        except Exception:
+            artifact_dir = "ml_models/crop_recommendation/artifacts"
+            try:
+                self.crop_model   = joblib.load(f"{artifact_dir}/best_model.pkl")
+                self.crop_scaler  = joblib.load(f"{artifact_dir}/scaler.pkl")
+                self.crop_encoder = joblib.load(f"{artifact_dir}/label_encoder.pkl")
+                self._model_versions["crop"] = "local:v1"
+                logger.info("Loaded crop model from local artifacts")
+            except Exception as e:
+                logger.warning(f"Could not load crop model: {e}. Using mock.")
+                self._model_versions["crop"] = "mock"
 
-    # ── Yield model ──────────────────────────────────────────────
     async def _load_yield_model(self):
         artifact_dir = "ml_models/yield_prediction/artifacts"
         try:
@@ -97,23 +103,18 @@ class ModelService:
             logger.warning(f"Could not load yield model: {e}. Using mock.")
             self._model_versions["yield"] = "mock"
 
-    # ── RAG service ──────────────────────────────────────────────
     async def _load_rag(self):
         try:
             self.rag = RAGService(
                 openai_key=os.getenv("OPENAI_API_KEY"),
                 pinecone_key=os.getenv("PINECONE_API_KEY"),
                 pinecone_index=os.getenv("PINECONE_INDEX", "kisaan-ai"),
-                redis_url=(
-                    f"redis://{os.getenv('REDIS_HOST', 'localhost')}:"
-                    f"{os.getenv('REDIS_PORT', 6379)}"
-                ),
+                redis_url=f"redis://{os.getenv('REDIS_HOST', 'localhost')}:{os.getenv('REDIS_PORT', 6379)}",
             )
             self._model_versions["rag"] = "groq+llama3"
             logger.info("RAG service initialized")
         except Exception as e:
             logger.warning(f"Could not init RAG: {e}")
-            self.rag = None
             self._model_versions["rag"] = "unavailable"
 
     # ── Crop prediction ──────────────────────────────────────────
@@ -142,11 +143,7 @@ class ModelService:
 
         proba    = self.crop_model.predict_proba(features)[0]
         top3_idx = proba.argsort()[-3:][::-1]
-        classes  = (
-            self.crop_encoder.classes_
-            if self.crop_encoder
-            else list(range(len(proba)))
-        )
+        classes  = self.crop_encoder.classes_ if self.crop_encoder else list(range(len(proba)))
 
         return CropPredictResponse(
             recommended_crop=str(classes[top3_idx[0]]),
@@ -164,6 +161,7 @@ class ModelService:
         version = self._model_versions.get("yield", "mock")
 
         if self.yield_model is None or version == "mock":
+            # Mock: rough estimate based on crop
             base = {
                 "rice": 3500, "wheat": 3200, "maize": 4500,
                 "potato": 18000, "soybean": 2800, "cotton": 1500,
@@ -178,61 +176,77 @@ class ModelService:
                 model_version="mock:v0",
             )
 
-        # Map common name → FAO dataset name
-        crop_key = request.crop.lower().strip()
-        fao_crop = CROP_NAME_MAP.get(crop_key, request.crop)
+        # Map common crop name → FAO dataset name
+        crop_key  = request.crop.lower().strip()
+        fao_crop  = CROP_NAME_MAP.get(crop_key, request.crop)
 
         # Encode crop
         try:
             item_enc = self.item_encoder.transform([fao_crop])[0]
         except ValueError:
+            # Try partial match
             supported = self.item_encoder.classes_
             matches   = [c for c in supported if crop_key in c.lower()]
             if matches:
-                fao_crop = matches[0]
-                item_enc = self.item_encoder.transform([fao_crop])[0]
+                fao_crop  = matches[0]
+                item_enc  = self.item_encoder.transform([fao_crop])[0]
             else:
+                # Use mean encoding as fallback
                 item_enc = len(self.item_encoder.classes_) // 2
-                logger.warning(f"Crop '{request.crop}' not in training data, using fallback.")
+                logger.warning(
+                    f"Crop '{request.crop}' not in training data. "
+                    f"Supported: {list(self.item_encoder.classes_)}"
+                )
 
-        # Encode country
-        country = STATE_TO_COUNTRY.get(request.state.lower(), "India")
+        # Encode country (map Indian states → India)
+        country   = STATE_TO_COUNTRY.get(request.state.lower(), "India")
         try:
-            area_enc = self.area_encoder.transform([country])[0]
+            area_enc  = self.area_encoder.transform([country])[0]
         except ValueError:
-            area_enc = self.area_encoder.transform(["India"])[0]
+            area_enc  = self.area_encoder.transform(["India"])[0]
 
-        # Pesticides kg/ha → tonnes
+        # Season → approximate year offset (not in dataset, use recent year)
+        year = 2020
+
+        # Rainfall: use request value directly
+        # Pesticides: convert kg/ha → tonnes (dataset uses tonnes)
         pesticides_tonnes = request.pesticide_kg / 1000.0
 
-        # Temperature from season
+        # Temperature: estimate from season if not provided
         season_temp = {"kharif": 28.0, "rabi": 18.0, "zaid": 36.0}
         avg_temp    = season_temp.get(request.season.lower(), 25.0)
 
         features = np.array([[
-            area_enc, item_enc, 2020,
+            area_enc,
+            item_enc,
+            year,
             request.annual_rainfall,
             pesticides_tonnes,
             avg_temp,
         ]])
         features_scaled = self.yield_scaler.transform(features)
 
-        hg_ha  = max(0.0, float(self.yield_model.predict(features_scaled)[0]))
+        # Predict in hg/ha → convert to kg/ha (1 hg = 0.1 kg, so hg/ha * 0.1 = kg/ha)
+        hg_ha  = float(self.yield_model.predict(features_scaled)[0])
+        hg_ha  = max(0, hg_ha)
         kg_ha  = round(hg_ha * 0.1, 1)
         total  = round(kg_ha * request.area_hectares, 1)
+
+        # Confidence interval: ±12% based on model MAE
+        lower  = round(kg_ha * 0.88, 1)
+        upper  = round(kg_ha * 1.12, 1)
 
         return YieldPredictResponse(
             crop=request.crop,
             predicted_yield_kg_per_ha=kg_ha,
             total_estimated_yield_kg=total,
-            confidence_interval={"lower": round(kg_ha * 0.88, 1), "upper": round(kg_ha * 1.12, 1)},
-            model_version=f"local:v1 ({self.yield_meta.get('best_model', 'rf')})",
+            confidence_interval={"lower": lower, "upper": upper},
+            model_version=f"local:v1 ({self.yield_meta.get('best_model','rf')})",
         )
 
-    # ── Status ───────────────────────────────────────────────────
     def get_status(self) -> dict:
         import time
         return {
             "models_loaded": self._model_versions,
-            "uptime_seconds": round(time.time() - (self._startup_time or 0), 1),
+            "uptime_seconds": time.time() - (self._startup_time or 0),
         }
